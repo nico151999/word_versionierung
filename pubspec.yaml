@@ -1,0 +1,9 @@
+name: Word_Versionierung
+description: Eine Anwendung, um die Versionierung von Word mit Hilfe von git zu ermöglichen
+
+environment:
+  sdk: '>=2.8.1 <3.0.0'
+
+dependencies:
+  archive: ^2.0.13
+  git: ^1.0.1
