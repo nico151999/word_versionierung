@@ -6,7 +6,9 @@ void main() {
   ueberpruefeAbhaengigkeit(['git']);
   Map<String, Ausfuehrer> auswahlMoeglichkeiten = {
     'Neue Version erstellen': VersionErsteller(),
-    'Alte Version auschecken': VersionAuschecker()
+    'Alte Version auschecken': VersionAuschecker(),
+    'Vom Remote Updates beziehen': SelbstAktualisierer(),
+    'Updates zum Remote schieben': RemoteAktualisierer()
   };
 
   int i = 0;

@@ -85,8 +85,8 @@ class VersionErsteller extends Ausfuehrer {
       print('Seit der letzten Version hat sich nichts geändert. Abbruch...');
       return;
     }
-    await runGit(['add', '-A'], processWorkingDir: git.path);
-    await runGit(['commit', '-m', titel], processWorkingDir: git.path);
+    await git.runCommand(['add', '-A']);
+    await git.runCommand(['commit', '-m', titel]);
   }
 }
 
@@ -106,8 +106,7 @@ class VersionAuschecker extends Ausfuehrer {
     int auswahl = auswaehler(commits.length);
     bool aktuellerVersionsstand = auswahl == commits.length;
     if (!aktuellerVersionsstand) {
-      await runGit(['checkout', commits.keys.toList()[auswahl - 1]],
-          processWorkingDir: git.path);
+      await git.runCommand(['checkout', commits.keys.toList()[auswahl - 1]]);
     }
     ZipFileEncoder kodierer = ZipFileEncoder();
     kodierer.create("${commits.values.toList()[auswahl - 1].message}.docx");
@@ -128,8 +127,118 @@ class VersionAuschecker extends Ausfuehrer {
     }
     kodierer.close();
     if (!aktuellerVersionsstand) {
-      await runGit(['checkout', commits.keys.toList().last],
-          processWorkingDir: git.path);
+      await git.runCommand(['checkout', commits.keys.toList().last]);
     }
+  }
+}
+
+abstract class Aktualisierer extends Ausfuehrer {
+
+  String _remote = 'origin';
+  String _alterRemote;
+
+  void aktualisieren(bool aktualisiereRemote) async {
+    String branch = 'master';
+    GitDir git;
+    if (await GitDir.isGitDir(_versionierungsOrdner)) {
+      git = await GitDir.fromExisting(_versionierungsOrdner);
+      List<String> remotes = LineSplitter.split(
+          (await git.runCommand(['remote', '-v'])).stdout as String).toList();
+      // funktioniert nur, wenn push und pull identisch sind
+      int i = remotes.indexWhere((zeile) => zeile.startsWith(_remote));
+      if (i == -1) {
+        await remoteHinzufuegenMitAbfrage(git);
+      } else {
+        _alterRemote = remotes[i].split(String.fromCharCode(9))[1].split(" ")[0];
+        await remoteHinzufuegen(git, _alterRemote, setzen: true);
+      }
+    } else {
+      Directory versionierungsOrdner = Directory(_versionierungsOrdner);
+      if (!versionierungsOrdner.existsSync()) {
+        versionierungsOrdner.createSync();
+        git = await GitDir.init(_versionierungsOrdner);
+        await remoteHinzufuegenMitAbfrage(git);
+      } else {
+        return keinRepo();
+      }
+    }
+    await git.runCommand(['fetch']);
+    String asynchronitaetsArgument;
+    String richtung;
+    if (aktualisiereRemote) {
+      asynchronitaetsArgument = 'HEAD..$_remote/$branch';
+      richtung = 'push';
+    } else {
+      asynchronitaetsArgument = '$_remote/$branch..HEAD';
+      richtung = 'pull';
+    }
+    try {
+      String asynchronitaet = (await git.runCommand(
+          ['log', asynchronitaetsArgument])).stdout;
+      if (asynchronitaet.length > 0) {
+        print("Das lokale Repository und das Remote-Repository haben eine nicht auflösbare Asynchronität. Abbruch...");
+        exit(1);
+        return;
+      }
+    } on ProcessException {
+      // Tritt auf, wenn Repository noch keine Branch und keinen Commit hat
+    }
+    try {
+      await git.runCommand([richtung, _remote, branch]);
+    } on ProcessException catch (e) {
+      if (e.message.contains("Couldn't find remote ref master")) {
+        // Remote Repository ist leer
+      }
+    }
+    if (_alterRemote != null) {
+      await git.runCommand(['remote', 'set-url', _remote, _alterRemote]);
+    }
+  }
+
+  void remoteHinzufuegen(GitDir git, String url, {bool setzen = false}) async {
+    RegExpMatch treffer = new RegExp(
+      r"^(https?://)(.+:.+@)?(.+)",
+      caseSensitive: true,
+      multiLine: false,
+    ).firstMatch(url);
+    if (treffer == null) {
+      print("Die Remote-URL ist invalide");
+      exit(1);
+      return;
+    }
+    if (treffer.group(2) == null) {
+      print("Gib deinen Git-Nutzernamen ein!");
+      String nutzername = stdin.readLineSync(encoding: Encoding.getByName('utf-8'));
+      print("Gib dein Git-Passwort ein!");
+      String passwort = stdin.readLineSync(encoding: Encoding.getByName('utf-8'));
+      if ([nutzername.length, passwort.length].contains(0)) {
+        return falscheAuswahl();
+      }
+      url = '${treffer.group(1)}$nutzername:$passwort@${treffer.group(3)}';
+    }
+    await git.runCommand(['remote', setzen ? 'set-url' : 'add', _remote, url]);
+  }
+
+  void remoteHinzufuegenMitAbfrage(GitDir git) async {
+    print("Gib die remote URL zum Host ein, auf den du deine Daten hochladen möchtest!");
+    _alterRemote = stdin.readLineSync(encoding: Encoding.getByName('utf-8'));
+    if (_alterRemote.length < 1) {
+      return falscheAuswahl();
+    }
+    await remoteHinzufuegen(git, _alterRemote);
+  }
+}
+
+class SelbstAktualisierer extends Aktualisierer {
+  @override
+  void ausfuehren() async {
+    super.aktualisieren(false);
+  }
+}
+
+class RemoteAktualisierer extends Aktualisierer {
+  @override
+  void ausfuehren() async {
+    super.aktualisieren(true);
   }
 }
