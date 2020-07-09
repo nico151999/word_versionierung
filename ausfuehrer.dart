@@ -141,22 +141,32 @@ abstract class Aktualisierer extends Ausfuehrer {
     String branch = 'master';
     GitDir git;
     if (await GitDir.isGitDir(_versionierungsOrdner)) {
-      git = await GitDir.fromExisting(_versionierungsOrdner);
-      List<String> remotes = LineSplitter.split(
-          (await git.runCommand(['remote', '-v'])).stdout as String).toList();
-      // funktioniert nur, wenn push und pull identisch sind
-      int i = remotes.indexWhere((zeile) => zeile.startsWith(_remote));
-      if (i == -1) {
+      try {
+        git = await GitDir.fromExisting(_versionierungsOrdner);
+      } on ArgumentError {
+        print("Einer der übergeordneten Ordner ist ein git Repository. Abbruch...");
+        exit(1);
+        return;
+      }
+      ProcessResult remote = await git.runCommand(['remote', 'get-url', _remote], throwOnError: false);
+      if (remote.exitCode == 1) {
         await remoteHinzufuegenMitAbfrage(git);
       } else {
-        _alterRemote = remotes[i].split(String.fromCharCode(9))[1].split(" ")[0];
+        _alterRemote = remote.stdout;
         await remoteHinzufuegen(git, _alterRemote, setzen: true);
       }
     } else {
       Directory versionierungsOrdner = Directory(_versionierungsOrdner);
       if (!versionierungsOrdner.existsSync()) {
         versionierungsOrdner.createSync();
-        git = await GitDir.init(_versionierungsOrdner);
+        try {
+          git = await GitDir.init(_versionierungsOrdner);
+        } on ArgumentError {
+          versionierungsOrdner.deleteSync();
+          print("Einer der übergeordneten Ordner ist ein git Repository. Abbruch...");
+          exit(1);
+          return;
+        }
         await remoteHinzufuegenMitAbfrage(git);
       } else {
         return keinRepo();
@@ -172,23 +182,17 @@ abstract class Aktualisierer extends Ausfuehrer {
       asynchronitaetsArgument = '$_remote/$branch..HEAD';
       richtung = 'pull';
     }
-    try {
-      String asynchronitaet = (await git.runCommand(
-          ['log', asynchronitaetsArgument])).stdout;
-      if (asynchronitaet.length > 0) {
-        print("Das lokale Repository und das Remote-Repository haben eine nicht auflösbare Asynchronität. Abbruch...");
-        exit(1);
-        return;
-      }
-    } on ProcessException {
-      // Tritt auf, wenn Repository noch keine Branch und keinen Commit hat
+    String asynchronitaet = (await git.runCommand(
+        ['log', asynchronitaetsArgument], throwOnError: false)).stdout;
+    if (asynchronitaet.length > 0) {
+      print("Das lokale Repository und das Remote-Repository haben eine nicht auflösbare Asynchronität. Abbruch...");
+      exit(1);
+      return;
     }
     try {
       await git.runCommand([richtung, _remote, branch]);
-    } on ProcessException catch (e) {
-      if (e.message.contains("Couldn't find remote ref master")) {
-        // Remote Repository ist leer
-      }
+    } on ProcessException {
+      // Remote Repository ist wahrscheinlich leer
     }
     if (_alterRemote != null) {
       await git.runCommand(['remote', 'set-url', _remote, _alterRemote]);
